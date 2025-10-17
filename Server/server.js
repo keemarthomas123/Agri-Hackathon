@@ -1,5 +1,5 @@
 const express = require('express');
-const mysql = require('mysql2');
+const { Pool } = require('pg');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
@@ -23,21 +23,22 @@ if (!fs.existsSync(uploadsDir)) {
 // Serve uploaded images
 app.use('/uploads', express.static(uploadsDir));
 
-// MySQL Database Connection
-const db = mysql.createConnection({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'agri_store'
+// PostgreSQL Database Connection (Neon)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
-// Connect to database
-db.connect((err) => {
+// Test database connection
+pool.query('SELECT NOW()', (err, res) => {
   if (err) {
-    console.error('Error connecting to MySQL database:', err);
+    console.error('Error connecting to PostgreSQL database:', err);
     return;
   }
-  console.log('Connected to MySQL database successfully!');
+  console.log('Connected to PostgreSQL database successfully!');
+  console.log('Current time:', res.rows[0].now);
 });
 
 // Configure Multer for image uploads
@@ -55,197 +56,223 @@ const upload = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
-    const filetypes = /jpeg|jpg|png|gif/;
-    const mimetype = filetypes.test(file.mimetype);
-    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-    
+    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
     if (mimetype && extname) {
       return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
     }
-    cb(new Error('Only image files are allowed!'));
   }
 });
 
-// ============== API ROUTES ==============
+// ==================== API ROUTES ====================
 
-// Test route
-app.get('/api/test', (req, res) => {
-  res.json({ message: 'Server is running!' });
-});
-
-// Get all products
-app.get('/api/products', (req, res) => {
-  const query = 'SELECT * FROM products ORDER BY created_at DESC';
-  
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Error fetching products:', err);
-      return res.status(500).json({ error: 'Failed to fetch products' });
+// Health check
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Agricultural Store API is running!',
+    database: 'PostgreSQL (Neon)',
+    endpoints: {
+      products: '/api/products',
+      addProduct: 'POST /api/products',
+      getProduct: '/api/products/:id',
+      deleteProduct: 'DELETE /api/products/:id'
     }
-    res.json(results);
   });
 });
 
-// Get single product by ID
-app.get('/api/products/:id', (req, res) => {
-  const query = 'SELECT * FROM products WHERE id = ?';
-  
-  db.query(query, [req.params.id], (err, results) => {
-    if (err) {
-      console.error('Error fetching product:', err);
-      return res.status(500).json({ error: 'Failed to fetch product' });
-    }
+// GET all products
+app.get('/api/products', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM products ORDER BY created_at DESC'
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    res.status(500).json({ error: 'Failed to fetch products' });
+  }
+});
+
+// GET single product by ID
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM products WHERE id = $1',
+      [id]
+    );
     
-    if (results.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
     
-    res.json(results[0]);
-  });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching product:', error);
+    res.status(500).json({ error: 'Failed to fetch product' });
+  }
 });
 
-// Add new product with image upload
-app.post('/api/products', upload.single('image'), (req, res) => {
-  const { productName, category, quantity, unit, price, description, harvestDate } = req.body;
-  const imagePath = req.file ? `/uploads/${req.file.filename}` : null;
-  
-  const query = `
-    INSERT INTO products 
-    (product_name, category, quantity, unit, price, description, harvest_date, image_path) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-  
-  const values = [productName, category, quantity, unit, price, description, harvestDate, imagePath];
-  
-  db.query(query, values, (err, result) => {
-    if (err) {
-      console.error('Error adding product:', err);
-      return res.status(500).json({ error: 'Failed to add product' });
-    }
+// POST - Add new product (with image upload)
+app.post('/api/products', upload.single('image'), async (req, res) => {
+  try {
+    const { productName, category, quantity, unit, price, description, harvestDate } = req.body;
     
+    // Validation
+    if (!productName || !category || !quantity || !unit || !price || !harvestDate) {
+      return res.status(400).json({ error: 'Please fill in all required fields' });
+    }
+
+    // Get image path if uploaded
+    const imagePath = req.file ? `/uploads/${req.file.filename}` : null;
+
+    // Insert into database
+    const result = await pool.query(
+      `INSERT INTO products (product_name, category, quantity, unit, price, description, harvest_date, image_path)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [productName, category, parseFloat(quantity), unit, parseFloat(price), description, harvestDate, imagePath]
+    );
+
     res.status(201).json({
       message: 'Product added successfully!',
-      productId: result.insertId,
-      imagePath: imagePath
+      product: result.rows[0]
     });
-  });
-});
-
-// Update product
-app.put('/api/products/:id', upload.single('image'), (req, res) => {
-  const { productName, category, quantity, unit, price, description, harvestDate } = req.body;
-  const imagePath = req.file ? `/uploads/${req.file.filename}` : null;
-  
-  let query = `
-    UPDATE products 
-    SET product_name = ?, category = ?, quantity = ?, unit = ?, price = ?, 
-        description = ?, harvest_date = ?
-  `;
-  
-  let values = [productName, category, quantity, unit, price, description, harvestDate];
-  
-  if (imagePath) {
-    query += ', image_path = ?';
-    values.push(imagePath);
+  } catch (error) {
+    console.error('Error adding product:', error);
+    res.status(500).json({ error: 'Failed to add product' });
   }
-  
-  query += ' WHERE id = ?';
-  values.push(req.params.id);
-  
-  db.query(query, values, (err, result) => {
-    if (err) {
-      console.error('Error updating product:', err);
-      return res.status(500).json({ error: 'Failed to update product' });
-    }
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    
-    res.json({ message: 'Product updated successfully!' });
-  });
 });
 
-// Delete product
-app.delete('/api/products/:id', (req, res) => {
-  // First, get the product to delete its image
-  const selectQuery = 'SELECT image_path FROM products WHERE id = ?';
-  
-  db.query(selectQuery, [req.params.id], (err, results) => {
-    if (err) {
-      console.error('Error fetching product:', err);
-      return res.status(500).json({ error: 'Failed to delete product' });
-    }
+// PUT - Update product
+app.put('/api/products/:id', upload.single('image'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productName, category, quantity, unit, price, description, harvestDate } = req.body;
     
-    if (results.length === 0) {
+    // Check if product exists
+    const checkResult = await pool.query('SELECT * FROM products WHERE id = $1', [id]);
+    if (checkResult.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
+
+    // Get image path if new image uploaded, otherwise keep old one
+    const imagePath = req.file ? `/uploads/${req.file.filename}` : checkResult.rows[0].image_path;
+
+    // Delete old image if new one uploaded
+    if (req.file && checkResult.rows[0].image_path) {
+      const oldImagePath = path.join(__dirname, checkResult.rows[0].image_path);
+      if (fs.existsSync(oldImagePath)) {
+        fs.unlinkSync(oldImagePath);
+      }
+    }
+
+    // Update product
+    const result = await pool.query(
+      `UPDATE products 
+       SET product_name = $1, category = $2, quantity = $3, unit = $4, 
+           price = $5, description = $6, harvest_date = $7, image_path = $8, 
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $9
+       RETURNING *`,
+      [productName, category, parseFloat(quantity), unit, parseFloat(price), description, harvestDate, imagePath, id]
+    );
+
+    res.json({
+      message: 'Product updated successfully!',
+      product: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    res.status(500).json({ error: 'Failed to update product' });
+  }
+});
+
+// DELETE product
+app.delete('/api/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
     
-    // Delete the image file if it exists
-    if (results[0].image_path) {
-      const imagePath = path.join(__dirname, results[0].image_path);
+    // Get product to find image path
+    const result = await pool.query('SELECT * FROM products WHERE id = $1', [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const product = result.rows[0];
+
+    // Delete image file if exists
+    if (product.image_path) {
+      const imagePath = path.join(__dirname, product.image_path);
       if (fs.existsSync(imagePath)) {
         fs.unlinkSync(imagePath);
       }
     }
-    
+
     // Delete from database
-    const deleteQuery = 'DELETE FROM products WHERE id = ?';
-    db.query(deleteQuery, [req.params.id], (err, result) => {
-      if (err) {
-        console.error('Error deleting product:', err);
-        return res.status(500).json({ error: 'Failed to delete product' });
-      }
-      
-      res.json({ message: 'Product deleted successfully!' });
-    });
-  });
+    await pool.query('DELETE FROM products WHERE id = $1', [id]);
+
+    res.json({ message: 'Product deleted successfully!' });
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({ error: 'Failed to delete product' });
+  }
 });
 
-// Get products by category
-app.get('/api/products/category/:category', (req, res) => {
-  const query = 'SELECT * FROM products WHERE category = ? ORDER BY created_at DESC';
-  
-  db.query(query, [req.params.category], (err, results) => {
-    if (err) {
-      console.error('Error fetching products by category:', err);
-      return res.status(500).json({ error: 'Failed to fetch products' });
-    }
-    res.json(results);
-  });
+// GET products by category
+app.get('/api/products/category/:category', async (req, res) => {
+  try {
+    const { category } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM products WHERE category = $1 ORDER BY created_at DESC',
+      [category]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching products by category:', error);
+    res.status(500).json({ error: 'Failed to fetch products' });
+  }
 });
 
-// Search products
-app.get('/api/products/search/:keyword', (req, res) => {
-  const keyword = `%${req.params.keyword}%`;
-  const query = `
-    SELECT * FROM products 
-    WHERE product_name LIKE ? OR description LIKE ? OR category LIKE ?
-    ORDER BY created_at DESC
-  `;
-  
-  db.query(query, [keyword, keyword, keyword], (err, results) => {
-    if (err) {
-      console.error('Error searching products:', err);
-      return res.status(500).json({ error: 'Failed to search products' });
-    }
-    res.json(results);
-  });
+// GET products by search keyword
+app.get('/api/products/search/:keyword', async (req, res) => {
+  try {
+    const { keyword } = req.params;
+    const result = await pool.query(
+      `SELECT * FROM products 
+       WHERE product_name ILIKE $1 OR description ILIKE $1 
+       ORDER BY created_at DESC`,
+      [`%${keyword}%`]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error searching products:', error);
+    res.status(500).json({ error: 'Failed to search products' });
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
+  console.log(`Using PostgreSQL (Neon) database`);
 });
 
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  db.end((err) => {
-    if (err) {
-      console.error('Error closing database connection:', err);
-    } else {
-      console.log('Database connection closed.');
-    }
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  pool.end(() => {
+    console.log('Database pool closed');
     process.exit(0);
   });
 });
