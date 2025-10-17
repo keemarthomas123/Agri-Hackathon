@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './AddProduct.css';
+import API_URL from '../config';
 
 const AddProduct = () => {
   const [formData, setFormData] = useState({
@@ -54,7 +55,7 @@ const AddProduct = () => {
       }
 
       // Send POST request to server
-      const response = await fetch('http://localhost:5000/api/products', {
+      const response = await fetch(`${API_URL}/api/products`, {
         method: 'POST',
         body: formDataToSend,
       });

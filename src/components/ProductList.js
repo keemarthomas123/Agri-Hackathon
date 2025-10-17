@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './ProductList.css';
+import API_URL from '../config';
 
 const ProductList = ({ userRole = 'farmer' }) => {
   const [products, setProducts] = useState([]);
@@ -16,7 +17,7 @@ const ProductList = ({ userRole = 'farmer' }) => {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:5000/api/products');
+      const response = await fetch(`${API_URL}/api/products`);
       
       if (!response.ok) {
         throw new Error('Failed to fetch products');
@@ -40,7 +41,7 @@ const ProductList = ({ userRole = 'farmer' }) => {
     }
 
     try {
-      const response = await fetch(`http://localhost:5000/api/products/${id}`, {
+      const response = await fetch(`${API_URL}/api/products/${id}`, {
         method: 'DELETE',
       });
 
@@ -129,7 +130,7 @@ const ProductList = ({ userRole = 'farmer' }) => {
               <div className="product-image">
                 {product.image_path ? (
                   <img 
-                    src={`http://localhost:5000${product.image_path}`} 
+                    src={`${API_URL}${product.image_path}`} 
                     alt={product.product_name}
                   />
                 ) : (
