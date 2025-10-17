@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # My React App
 
 This is a simple React application created to demonstrate the basic structure and functionality of a React project.
@@ -57,3 +58,6 @@ If you would like to contribute to this project, please fork the repository and 
 ## License
 
 This project is licensed under the MIT License.
+=======
+# Agri-Hackathon
+>>>>>>> 110006ff9110981bb93dc949d21e1d359801eb3a
