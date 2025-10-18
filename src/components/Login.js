@@ -53,11 +53,11 @@ const Login = ({ onLogin }) => {
       } else {
         // Login validation
         // TODO: Add API call for login
-        console.log('Login Data:', { email: formData.email, password: formData.password, role: formData.role });
+        console.log('Login Data:', { email: formData.email, password: formData.password });
         
         // Simulate successful login
         setTimeout(() => {
-          alert(`Login successful as ${formData.role === 'farmer' ? 'Farmer' : 'Consumer'}! 🎉`);
+          alert(`${formData.role === 'farmer' ? 'Farmer' : 'Consumer'} login successful! 🎉`);
           if (onLogin) {
             onLogin({ 
               email: formData.email, 
@@ -113,7 +113,7 @@ const Login = ({ onLogin }) => {
                   <span className="role-icon">🌾</span>
                   <div>
                     <strong>Farmer</strong>
-                    <p>Sell agricultural products</p>
+                    <p>Sell products</p>
                   </div>
                 </div>
               </label>
@@ -131,7 +131,7 @@ const Login = ({ onLogin }) => {
                   <span className="role-icon">🛒</span>
                   <div>
                     <strong>Consumer</strong>
-                    <p>Buy fresh products</p>
+                    <p>Buy products</p>
                   </div>
                 </div>
               </label>
@@ -139,19 +139,17 @@ const Login = ({ onLogin }) => {
           </div>
 
           {isSignUp && (
-            <>
-              <div className="form-group">
-                <label>Full Name</label>
-                <input
-                  type="text"
-                  name="fullName"
-                  value={formData.fullName}
-                  onChange={handleChange}
-                  placeholder="Enter your full name"
-                  disabled={loading}
-                />
-              </div>
-            </>
+            <div className="form-group">
+              <label>Full Name</label>
+              <input
+                type="text"
+                name="fullName"
+                value={formData.fullName}
+                onChange={handleChange}
+                placeholder="Enter your full name"
+                disabled={loading}
+              />
+            </div>
           )}
 
           <div className="form-group">

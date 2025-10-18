@@ -2,12 +2,41 @@ import React, { useState, useEffect } from 'react';
 import './ProductList.css';
 import API_URL from '../config';
 
-const ProductList = ({ userRole = 'farmer' }) => {
+const ProductList = ({ userRole = 'farmer', user, onAddToCart }) => {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [priceRange, setPriceRange] = useState({ min: '', max: '' });
+  const [sortBy, setSortBy] = useState('newest'); // 'newest', 'price-low', 'price-high', 'name'
+  const [favorites, setFavorites] = useState([]);
+
+  // Load favorites from localStorage
+  useEffect(() => {
+    if (user && userRole === 'consumer') {
+      const savedFavorites = localStorage.getItem(`favorites_${user.email}`);
+      if (savedFavorites) {
+        setFavorites(JSON.parse(savedFavorites));
+      }
+    }
+  }, [user, userRole]);
+
+  // Save favorites to localStorage
+  useEffect(() => {
+    if (user && userRole === 'consumer') {
+      localStorage.setItem(`favorites_${user.email}`, JSON.stringify(favorites));
+    }
+  }, [favorites, user, userRole]);
+
+  const toggleFavorite = (productId) => {
+    if (favorites.includes(productId)) {
+      setFavorites(favorites.filter(id => id !== productId));
+    } else {
+      setFavorites([...favorites, productId]);
+      alert('💖 Added to favorites!');
+    }
+  };
 
   // Fetch products from API
   useEffect(() => {
@@ -20,7 +49,12 @@ const ProductList = ({ userRole = 'farmer' }) => {
       const response = await fetch(`${API_URL}/api/products`);
       
       if (!response.ok) {
-        throw new Error('Failed to fetch products');
+        throw new Error('Failed to fetch products. Make sure the server is running on port 5000.');
+      }
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Server is not responding correctly. Please restart the backend server.');
       }
       
       const data = await response.json();
@@ -61,7 +95,28 @@ const ProductList = ({ userRole = 'farmer' }) => {
     const matchesSearch = product.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          product.description.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = selectedCategory === '' || product.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    
+    // Price range filter
+    const price = parseFloat(product.price);
+    const matchesMinPrice = priceRange.min === '' || price >= parseFloat(priceRange.min);
+    const matchesMaxPrice = priceRange.max === '' || price <= parseFloat(priceRange.max);
+    
+    return matchesSearch && matchesCategory && matchesMinPrice && matchesMaxPrice;
+  });
+
+  // Sort products
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
+    switch (sortBy) {
+      case 'price-low':
+        return parseFloat(a.price) - parseFloat(b.price);
+      case 'price-high':
+        return parseFloat(b.price) - parseFloat(a.price);
+      case 'name':
+        return a.product_name.localeCompare(b.product_name);
+      case 'newest':
+      default:
+        return new Date(b.created_at) - new Date(a.created_at);
+    }
   });
 
   if (loading) {
@@ -112,6 +167,35 @@ const ProductList = ({ userRole = 'farmer' }) => {
             <option value="other">Other</option>
           </select>
 
+          <div className="price-filter">
+            <input
+              type="number"
+              placeholder="Min $"
+              value={priceRange.min}
+              onChange={(e) => setPriceRange({ ...priceRange, min: e.target.value })}
+              className="price-input"
+            />
+            <span>-</span>
+            <input
+              type="number"
+              placeholder="Max $"
+              value={priceRange.max}
+              onChange={(e) => setPriceRange({ ...priceRange, max: e.target.value })}
+              className="price-input"
+            />
+          </div>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="sort-select"
+          >
+            <option value="newest">Newest First</option>
+            <option value="price-low">Price: Low to High</option>
+            <option value="price-high">Price: High to Low</option>
+            <option value="name">Name: A-Z</option>
+          </select>
+
           <button onClick={fetchProducts} className="btn-refresh">
             🔄 Refresh
           </button>
@@ -119,13 +203,13 @@ const ProductList = ({ userRole = 'farmer' }) => {
       </div>
 
       {/* Products Grid */}
-      {filteredProducts.length === 0 ? (
+      {sortedProducts.length === 0 ? (
         <div className="no-products">
           <p>No products found</p>
         </div>
       ) : (
         <div className="products-grid">
-          {filteredProducts.map(product => (
+          {sortedProducts.map(product => (
             <div key={product.id} className="product-card">
               <div className="product-image">
                 {product.image_path ? (
@@ -163,7 +247,7 @@ const ProductList = ({ userRole = 'farmer' }) => {
                   ) : (
                     <button 
                       className="btn-buy"
-                      onClick={() => alert('Purchase feature coming soon! 🛒')}
+                      onClick={() => onAddToCart(product)}
                     >
                       🛒 Add to Cart
                     </button>
